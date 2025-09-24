@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/dgrijalva/jwt-go"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -42,6 +42,20 @@ var (
 	jwtKey = []byte("your_secret_key")
 )
 
+type CreatePostRequest struct {
+	Title   string `json:"title" binding:"required"`
+	Content string `json:"content" binding:"required"`
+}
+
+type CreateCommentRequest struct {
+	Content string `json:"content" binding:"required"`
+}
+
+type Claims struct {
+	UserID uint `json:"user_id"`
+	jwt.RegisteredClaims
+}
+
 func initDB() {
 	var err error
 	newLogger := logger.New(
@@ -77,6 +91,8 @@ func setupRouter() *gin.Engine {
 	// 全局错误处理中间件
 	r.Use(errorHandler())
 	api := r.Group("/api")
+	api.POST("/register", Register)
+	api.POST("/login", Login)
 	{
 		// 文章路由
 		posts := api.Group("/posts")
@@ -134,8 +150,108 @@ func getPost(c *gin.Context) {
 	c.JSON(http.StatusOK, post)
 }
 
-// 其他业务函数实现...
-// [此处应包含updatePost/deletePost/listPosts/createComment/listComments等完整实现]
+func listPosts(c *gin.Context) {
+	var posts []Post
+	if err := db.Preload("User").Find(&posts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取文章列表失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"posts": posts})
+}
+
+func updatePost(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	id := c.Param("id")
+
+	var post Post
+	if err := db.First(&post, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文章不存在"})
+		return
+	}
+
+	if post.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权修改此文章"})
+		return
+	}
+
+	var req CreatePostRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	post.Title = req.Title
+	post.Content = req.Content
+	if err := db.Save(&post).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新文章失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, post)
+}
+
+func deletePost(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	id := c.Param("id")
+
+	var post Post
+	if err := db.First(&post, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文章不存在"})
+		return
+	}
+
+	if post.UserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权删除此文章"})
+		return
+	}
+
+	if err := db.Delete(&post).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除文章失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "文章删除成功"})
+}
+
+func createComment(c *gin.Context) {
+	userID := c.MustGet("userID").(uint)
+	postID := c.Param("id")
+
+	var req CreateCommentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求数据"})
+		return
+	}
+
+	var post Post
+	if err := db.First(&post, postID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "文章不存在"})
+		return
+	}
+
+	comment := Comment{
+		Content: req.Content,
+		UserID:  userID,
+		PostID:  post.ID,
+	}
+
+	if err := db.Create(&comment).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建评论失败"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, comment)
+}
+
+func listComments(c *gin.Context) {
+	postID := c.Param("id")
+	var comments []Comment
+	if err := db.Preload("User").Where("post_id = ?", postID).Find(&comments).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取评论列表失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"comments": comments})
+}
 
 // 认证中间件
 func authMiddleware() gin.HandlerFunc {
@@ -227,10 +343,11 @@ func Login(c *gin.Context) {
 		"exp":      time.Now().Add(time.Hour * 24).Unix(),
 	})
 
-	tokenString, err := token.SignedString([]byte("your_secret_key"))
+	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate token"})
 		return
 	}
 	// 剩下的逻辑...
+	c.JSON(http.StatusOK, gin.H{"token": tokenString})
 }

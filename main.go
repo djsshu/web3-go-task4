@@ -56,7 +56,7 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-func initDB() {
+func initDB() *gorm.DB {
 	var err error
 	newLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags),
@@ -77,19 +77,23 @@ func initDB() {
 
 	// 自动迁移
 	db.AutoMigrate(&User{}, &Post{}, &Comment{})
+	return db
 }
 
 func main() {
-	initDB()
-	r := setupRouter()
+	db := initDB()
+	r := setupRouter(db)
 	r.Run(":8080")
 }
 
-func setupRouter() *gin.Engine {
+func setupRouter(db *gorm.DB) *gin.Engine {
 	r := gin.Default()
 
 	// 全局错误处理中间件
 	r.Use(errorHandler())
+	r.Use(func(context *gin.Context) {
+		context.Set("db", db)
+	})
 	api := r.Group("/api")
 	api.POST("/register", Register)
 	api.POST("/login", Login)
@@ -97,8 +101,8 @@ func setupRouter() *gin.Engine {
 		// 文章路由
 		posts := api.Group("/posts")
 		{
-			posts.GET("", listPosts)
-			posts.GET("/:id", getPost)
+			posts.Use(authMiddleware()).GET("", listPosts)
+			posts.Use(authMiddleware()).GET("/:id", getPost)
 			posts.Use(authMiddleware()).POST("", createPost)
 			posts.Use(authMiddleware()).PUT("/:id", updatePost)
 			posts.Use(authMiddleware()).DELETE("/:id", deletePost)
@@ -107,7 +111,7 @@ func setupRouter() *gin.Engine {
 		// 评论路由
 		comments := api.Group("/posts/:id/comments")
 		{
-			comments.GET("", listComments)
+			comments.Use(authMiddleware()).GET("", listComments)
 			comments.Use(authMiddleware()).POST("", createComment)
 		}
 	}
@@ -151,6 +155,7 @@ func getPost(c *gin.Context) {
 }
 
 func listPosts(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	var posts []Post
 	if err := db.Preload("User").Find(&posts).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取文章列表失败"})
@@ -160,6 +165,7 @@ func listPosts(c *gin.Context) {
 }
 
 func updatePost(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	userID := c.MustGet("userID").(uint)
 	id := c.Param("id")
 
@@ -191,6 +197,7 @@ func updatePost(c *gin.Context) {
 }
 
 func deletePost(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	userID := c.MustGet("userID").(uint)
 	id := c.Param("id")
 
@@ -214,6 +221,7 @@ func deletePost(c *gin.Context) {
 }
 
 func createComment(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	userID := c.MustGet("userID").(uint)
 	postID := c.Param("id")
 
@@ -244,6 +252,7 @@ func createComment(c *gin.Context) {
 }
 
 func listComments(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	postID := c.Param("id")
 	var comments []Comment
 	if err := db.Preload("User").Where("post_id = ?", postID).Find(&comments).Error; err != nil {
@@ -296,6 +305,7 @@ func errorHandler() gin.HandlerFunc {
 }
 
 func Register(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	var user User
 	if err := c.ShouldBindJSON(&user); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -319,6 +329,7 @@ func Register(c *gin.Context) {
 
 func Login(c *gin.Context) {
 	var user User
+	db := c.MustGet("db").(*gorm.DB)
 	if err := c.ShouldBindJSON(&user); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

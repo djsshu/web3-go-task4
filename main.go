@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
@@ -52,7 +53,7 @@ type CreateCommentRequest struct {
 }
 
 type Claims struct {
-	UserID uint `json:"user_id"`
+	UserID uint `json:"userID"`
 	jwt.RegisteredClaims
 }
 
@@ -121,6 +122,7 @@ func setupRouter(db *gorm.DB) *gin.Engine {
 
 // 核心业务逻辑实现
 func createPost(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	userID := c.MustGet("userID").(uint)
 
 	var req CreatePostRequest
@@ -144,6 +146,7 @@ func createPost(c *gin.Context) {
 }
 
 func getPost(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
 	var post Post
 	if err := db.Preload("User").Preload("Comments.User").
 		First(&post, c.Param("id")).Error; err != nil {
@@ -282,6 +285,7 @@ func authMiddleware() gin.HandlerFunc {
 		}
 
 		c.Set("userID", claims.UserID)
+		fmt.Println("claims.UserID = ", claims.UserID)
 		c.Next()
 	}
 }
@@ -349,7 +353,7 @@ func Login(c *gin.Context) {
 
 	// 生成 JWT
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"id":       storedUser.ID,
+		"userID":   storedUser.ID,
 		"username": storedUser.Username,
 		"exp":      time.Now().Add(time.Hour * 24).Unix(),
 	})

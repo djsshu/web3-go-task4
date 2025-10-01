@@ -1,0 +1,7 @@
+server:
+  host: "localhost"
+  port: 8080
+database:
+  dsn: "root:123456@tcp(127.0.0.1:3306)/go_db?charset=utf8mb4&parseTime=True&loc=Local"
+  username: "admin"
+  password: "secret123"
